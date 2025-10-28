@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Voxel DEM Viewer</title>
+    <style>
+      html,
+      body,
+      canvas {
+        margin: 0;
+        height: 100%;
+        width: 100%;
+        overflow: hidden;
+        background: #111;
+      }
+
+      #loading {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: #0d1117;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        color: #ffffff;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial,
+          sans-serif;
+        z-index: 1000;
+      }
+
+      #loading h1 {
+        margin: 0 0 20px 0;
+        font-size: 24px;
+        font-weight: 300;
+      }
+
+      #loading p {
+        margin: 5px 0;
+        font-size: 14px;
+        color: #8b949e;
+      }
+
+      .spinner {
+        width: 40px;
+        height: 40px;
+        border: 3px solid #333;
+        border-top: 3px solid #58a6ff;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin: 20px 0;
+      }
+
+      @keyframes spin {
+        0% {
+          transform: rotate(0deg);
+        }
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="loading">
+      <h1>Voxel DEM Viewer</h1>
+      <div class="spinner"></div>
+      <p id="status">Initializing...</p>
+    </div>
+    <canvas id="c"></canvas>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "./node_modules/three/build/three.module.js"
+        }
+      }
+    </script>
+    <script type="module">
+      import * as THREE from 'three';
+      import { OrbitControls } from './node_modules/three/examples/jsm/controls/OrbitControls.js';
+
+      const canvas = document.getElementById('c');
+      const loadingEl = document.getElementById('loading');
+      const statusEl = document.getElementById('status');
+
+      function updateStatus(message) {
+        statusEl.textContent = message;
+        console.log(message);
+      }
+
+      function hideLoading() {
+        loadingEl.style.opacity = '0';
+        loadingEl.style.transition = 'opacity 0.5s';
+        setTimeout(() => {
+          loadingEl.style.display = 'none';
+        }, 500);
+      }
+      const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x0d1117);
+
+      const camera = new THREE.PerspectiveCamera(
+        60,
+        window.innerWidth / window.innerHeight,
+        1,
+        1e7
+      );
+      camera.position.set(1200, 1200, 1200);
+
+      const controls = new OrbitControls(camera, renderer.domElement);
+      controls.target.set(0, 0, 0);
+      controls.update();
+
+      const hemi = new THREE.HemisphereLight(0xffffff, 0x333344, 0.9);
+      scene.add(hemi);
+      const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+      dir.position.set(1000, 2000, 1000);
+      dir.castShadow = false;
+      scene.add(dir);
+
+      function makeInstancedTerrain(heights, rows, cols, hVoxel, vVoxel) {
+        const geom = new THREE.BoxGeometry(hVoxel, vVoxel, hVoxel);
+        const mat = new THREE.MeshStandardMaterial({
+          color: 0x6f8e5b,
+          metalness: 0.0,
+          roughness: 0.95,
+        });
+
+        // Count how many cubes total (sum of column heights). For demo, cap to avoid huge counts.
+        updateStatus('Counting total voxels to render...');
+        let total = 0;
+        for (let i = 0; i < rows * cols; i++) total += heights[i];
+        const originalTotal = total;
+        total = Math.min(total, 100_000_000); // safety cap
+
+        if (originalTotal > total) {
+          updateStatus(
+            `Capping at ${total.toLocaleString()} voxels (was ${originalTotal.toLocaleString()})`
+          );
+        } else {
+          updateStatus(`Creating ${total.toLocaleString()} voxel instances...`);
+        }
+
+        // InstanceMesh for efficient rendering of many boxes
+        // batches render calls into single draw call
+        // allows for better GPU handling of positioning and transforming each instance
+        // same vertex data, different transforms
+        const mesh = new THREE.InstancedMesh(geom, mat, total);
+        mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+
+        const dummy = new THREE.Object3D();
+        let idx = 0;
+        const half = hVoxel / 2;
+        const progressInterval = Math.max(1, Math.floor(rows / 10)); // Update every 10%
+
+        for (let r = 0; r < rows; r++) {
+          // Progress feedback every 10% of rows
+          if (r % progressInterval === 0) {
+            const progress = Math.round((r / rows) * 100);
+            updateStatus(
+              `Building terrain mesh... ${progress}% (${idx.toLocaleString()} voxels)`
+            );
+          }
+
+          for (let c = 0; c < cols; c++) {
+            const n = heights[r * cols + c];
+            const x = c * hVoxel + half;
+            const z = r * hVoxel + half;
+            for (let k = 0; k < n; k++) {
+              const y = k * vVoxel + vVoxel / 2;
+              // Set position of the cube
+              dummy.position.set(x, y, z);
+              // Calculate transformation matrix
+              dummy.updateMatrix();
+              // Store matrix for this instance
+              if (idx < total) mesh.setMatrixAt(idx++, dummy.matrix);
+            }
+          }
+        }
+
+        if (idx < total) mesh.count = idx;
+        updateStatus(
+          `Terrain mesh complete: ${idx.toLocaleString()} voxels rendered`
+        );
+        return mesh;
+      }
+
+      async function load() {
+        try {
+          updateStatus('Setting up 3D scene...');
+          const sourceFolder = './voxel_out_Lugano10x10x10/';
+          // const sourceFolder = './voxel_out_Switzerland500x500x500/';
+
+          updateStatus('Loading terrain metadata...');
+          const headerResponse = await fetch(`${sourceFolder}header.json`);
+          if (!headerResponse.ok)
+            throw new Error(
+              `Failed to load header.json: ${headerResponse.status}`
+            );
+          const header = await headerResponse.json();
+
+          const {
+            shape,
+            horizontal_voxel_m: hVoxel,
+            vertical_voxel_m: vVoxel,
+          } = header;
+          const rows = shape[0],
+            cols = shape[1];
+
+          updateStatus(`Loading terrain data (${rows} x ${cols} grid)...`);
+          const heightsResponse = await fetch(`${sourceFolder}heights.bin`);
+          if (!heightsResponse.ok)
+            throw new Error(
+              `Failed to load heights.bin: ${heightsResponse.status}`
+            );
+
+          const bytes = await heightsResponse.arrayBuffer();
+          updateStatus(
+            `Processing ${(bytes.byteLength / (1024 * 1024)).toFixed(
+              1
+            )} MB of terrain data...`
+          );
+
+          const heights = new Int16Array(bytes);
+
+          updateStatus('Generating 3D terrain mesh...');
+          const terrain = makeInstancedTerrain(
+            heights,
+            rows,
+            cols,
+            hVoxel,
+            vVoxel
+          );
+          scene.add(terrain);
+
+          updateStatus('Positioning camera...');
+          camera.position.set(
+            cols * hVoxel * 0.8,
+            Math.max(rows, cols) * hVoxel * 1.2,
+            rows * hVoxel * 0.8
+          );
+          controls.target.set((cols * hVoxel) / 2, 0, (rows * hVoxel) / 2);
+          controls.update();
+
+          updateStatus('Ready! Use mouse to navigate.');
+          setTimeout(hideLoading, 1000);
+        } catch (error) {
+          updateStatus(`Error: ${error.message}`);
+          console.error('Failed to load terrain:', error);
+        }
+      }
+
+      // Use top-level await instead of calling async function
+      await load();
+
+      window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+
+      renderer.setAnimationLoop(() => renderer.render(scene, camera));
+    </script>
+  </body>
+</html>
