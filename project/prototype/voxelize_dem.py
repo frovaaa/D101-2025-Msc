@@ -26,108 +26,163 @@ from matplotlib.colors import LightSource
 import matplotlib.pyplot as plt
 
 
-def reproject_and_resample(src, dst_crs=None, target_res=None, bbox=None):
-    """Return array, transform, crs after optional reprojection + resampling + crop.
-    bbox is (minx, miny, maxx, maxy) expressed in dst_crs if given, else in src.crs.
-    """
-    print(f"Processing DEM: {src.width}x{src.height} pixels, CRS: {src.crs}")
-    src_crs = src.crs
-    dst_crs_final = rasterio.crs.CRS.from_string(dst_crs) if dst_crs else src_crs
+def determine_target_crs(src_crs, dst_crs=None, target_res=None):
+    """Determine the final target CRS for processing."""
+    if dst_crs is not None:
+        dst_crs_final = rasterio.crs.CRS.from_string(dst_crs)
+    else:
+        dst_crs_final = src_crs
 
-    # If the user requested a target_res (meters) but the destination CRS is geographic
-    # (degrees), force a metric CRS so that the resolution means meters, not degrees.
+    # Force metric CRS if target_res is specified but CRS is geographic
     if target_res is not None and dst_crs_final.is_geographic:
         print(
             "Target resolution provided in meters but CRS is geographic; reprojecting to EPSG:3857 for metric resampling."
         )
         dst_crs_final = CRS.from_epsg(3857)
 
-    elif dst_crs is None and src_crs.is_geographic or dst_crs_final.is_geographic:
+    # Auto-select metric CRS if source is geographic and no CRS specified
+    elif dst_crs is None and src_crs.is_geographic:
         print(
             f"Source CRS is geographic ({src_crs}). Reprojecting to EPSG:3857 for metric voxel processing."
         )
         dst_crs_final = CRS.from_epsg(3857)
 
-    # Reproject to dst_crs if needed
-    if src_crs != dst_crs_final:
-        print(f"Reprojecting from {src_crs} to {dst_crs_final}...")
-        transform, width, height = calculate_default_transform(
-            src.crs,
-            dst_crs_final,
-            src.width,
-            src.height,
-            *src.bounds,
-            resolution=target_res,
-        )
-        kwargs = src.meta.copy()
-        kwargs.update(
-            {
-                "crs": dst_crs_final,
-                "transform": transform,
-                "width": width,
-                "height": height,
-            }
-        )
-        data = np.full((1, height, width), np.nan, dtype=np.float32)
-        print(f"Reprojecting to {width}x{height} grid...")
-        reproject(
-            source=rasterio.band(src, 1),
-            destination=data[0],
-            src_transform=src.transform,
-            src_crs=src.crs,
-            dst_transform=transform,
-            dst_crs=dst_crs_final,
-            resampling=Resampling.bilinear,
-            dst_nodata=np.nan,
-            num_threads=2,
-        )
-    else:
-        data = src.read(1, masked=True).filled(np.nan)[None, ...]
+    return dst_crs_final
 
-    # Resample to target_res if requested and not handled above
+
+def crop_to_bbox(data, transform, bbox):
+    """Crop data array to bounding box and update transform."""
+    if bbox is None:
+        return data, transform
+
+    print(f"Cropping to bbox: {bbox}")
+    minx, miny, maxx, maxy = bbox
+
+    # Compute window indices
+    col0 = int((minx - transform.c) / transform.a)
+    col1 = int((maxx - transform.c) / transform.a)
+    row0 = int((transform.f - maxy) / abs(transform.e))
+    row1 = int((transform.f - miny) / abs(transform.e))
+
+    # Clip to bounds
+    col0 = np.clip(col0, 0, data.shape[2])
+    col1 = np.clip(col1, 0, data.shape[2])
+    row0 = np.clip(row0, 0, data.shape[1])
+    row1 = np.clip(row1, 0, data.shape[1])
+
+    # Crop data
+    data = data[:, row0:row1, col0:col1]
+
+    # Recompute transform origin
+    new_origin_x = transform.c + col0 * transform.a
+    new_origin_y = transform.f - row0 * abs(transform.e)
+    new_transform = from_origin(
+        new_origin_x, new_origin_y, transform.a, abs(transform.e)
+    )
+
+    return data, new_transform
+
+
+def reproject_data(data, src_transform, src_crs, dst_crs, target_res=None):
+    """Reproject data from source CRS to destination CRS."""
+    if src_crs == dst_crs:
+        return data, src_transform
+
+    print(f"Reprojecting from {src_crs} to {dst_crs}...")
+
+    # Calculate bounds for the data
+    height, width = data.shape[-2:]
+    bounds = rasterio.transform.array_bounds(height, width, src_transform)
+
+    # Calculate new transform and dimensions
+    dst_transform, dst_width, dst_height = calculate_default_transform(
+        src_crs, dst_crs, width, height, *bounds, resolution=target_res
+    )
+
+    # Prepare output array
+    dst_data = np.full((data.shape[0], dst_height, dst_width), np.nan, dtype=np.float32)
+
+    print(f"Reprojecting to {dst_width}x{dst_height} grid...")
+    reproject(
+        source=data[0],
+        destination=dst_data[0],
+        src_transform=src_transform,
+        src_crs=src_crs,
+        dst_transform=dst_transform,
+        dst_crs=dst_crs,
+        resampling=Resampling.bilinear,
+        dst_nodata=np.nan,
+        num_threads=2,
+    )
+
+    return dst_data, dst_transform
+
+
+def resample_data(data, transform, current_crs, target_res):
+    """Resample data to a different resolution."""
+    if target_res is None:
+        return data, transform
+
+    print(f"Resampling to {target_res}m resolution...")
+
+    # Calculate new dimensions based on current bounds
+    height, width = data.shape[-2:]
+    bounds = rasterio.transform.array_bounds(height, width, transform)
+    minx, miny, maxx, maxy = bounds
+
+    new_width = int(np.ceil((maxx - minx) / target_res))
+    new_height = int(np.ceil((maxy - miny) / target_res))
+    new_transform = from_origin(minx, maxy, target_res, target_res)
+
+    # Prepare output array
+    out_data = np.full((data.shape[0], new_height, new_width), np.nan, dtype=np.float32)
+
+    reproject(
+        source=data[0],
+        destination=out_data[0],
+        src_transform=transform,
+        src_crs=current_crs,
+        dst_transform=new_transform,
+        dst_crs=current_crs,
+        resampling=Resampling.bilinear,
+        dst_nodata=np.nan,
+        num_threads=2,
+    )
+
+    return out_data, new_transform
+
+
+def reproject_and_resample(src, dst_crs=None, target_res=None, bbox=None):
+    """Return array, transform, crs after optional reprojection + resampling + crop.
+    bbox is (minx, miny, maxx, maxy) expressed in source CRS coordinates.
+
+    Processing order:
+    1. Crop to bbox (in source CRS)
+    2. Reproject to target CRS
+    3. Resample to target resolution
+    """
+    print(f"Processing DEM: {src.width}x{src.height} pixels, CRS: {src.crs}")
+    src_crs = src.crs
+
+    # Determine target CRS
+    dst_crs_final = determine_target_crs(src_crs, dst_crs, target_res)
+
+    # Step 1: Load and crop data (in source CRS)
+    data = src.read(1, masked=True).filled(np.nan)[None, ...]
+    transform = src.transform
+
+    data, transform = crop_to_bbox(data, transform, bbox)
+    current_crs = src_crs
+
+    # Step 2: Reproject if needed
+    data, transform = reproject_data(
+        data, transform, current_crs, dst_crs_final, target_res
+    )
+    current_crs = dst_crs_final
+
+    # Step 3: Resample if needed (and not already handled by reprojection)
     if target_res is not None and src_crs == dst_crs_final:
-        print(f"Resampling to {target_res}m resolution...")
-        xres, yres = target_res, target_res
-        # Compute new size from bounds
-        minx, miny, maxx, maxy = src.bounds
-        width = int(np.ceil((maxx - minx) / xres))
-        height = int(np.ceil((maxy - miny) / yres))
-        new_transform = from_origin(minx, maxx, xres, yres)
-        out = np.full((1, height, width), np.nan, dtype=np.float32)
-        reproject(
-            source=data[0],
-            destination=out[0],
-            src_transform=transform,
-            src_crs=dst_crs_final,
-            dst_transform=new_transform,
-            dst_crs=dst_crs_final,
-            resampling=Resampling.bilinear,
-            dst_nodata=np.nan,
-            num_threads=2,
-        )
-        data, transform = out, new_transform
-
-    # Crop to bbox if provided
-    if bbox is not None:
-        print(f"Cropping to bbox: {bbox}")
-        minx, miny, maxx, maxy = bbox
-        # Compute window indices
-        col0 = int((minx - transform.c) / transform.a)
-        col1 = int((maxx - transform.c) / transform.a)
-        row0 = int((transform.f - maxy) / abs(transform.e))
-        row1 = int((transform.f - miny) / abs(transform.e))
-        # Clip to bounds
-        col0 = np.clip(col0, 0, data.shape[2])
-        col1 = np.clip(col1, 0, data.shape[2])
-        row0 = np.clip(row0, 0, data.shape[1])
-        row1 = np.clip(row1, 0, data.shape[1])
-        data = data[:, row0:row1, col0:col1]
-        # Recompute transform origin
-        new_origin_x = transform.c + col0 * transform.a
-        new_origin_y = transform.f - row0 * abs(transform.e)
-        transform = from_origin(
-            new_origin_x, new_origin_y, transform.a, abs(transform.e)
-        )
+        data, transform = resample_data(data, transform, current_crs, target_res)
 
     return data[0], transform, dst_crs_final
 
@@ -196,6 +251,34 @@ def main():
 
     print("Opening DEM file...")
     with rasterio.open(args.dem) as src:
+        print(f"DEM bounds: {src.bounds}")
+        print(f"  West: {src.bounds.left:.3f}°, East: {src.bounds.right:.3f}°")
+        print(f"  South: {src.bounds.bottom:.3f}°, North: {src.bounds.top:.3f}°")
+
+        if args.bbox:
+            minx, miny, maxx, maxy = args.bbox
+            print(f"Requested bbox: {args.bbox}")
+            print(f"  West: {minx:.3f}°, East: {maxx:.3f}°")
+            print(f"  South: {miny:.3f}°, North: {maxy:.3f}°")
+
+            # Check if bbox intersects with DEM bounds
+            bbox_intersects = (
+                minx < src.bounds.right
+                and maxx > src.bounds.left
+                and miny < src.bounds.top
+                and maxy > src.bounds.bottom
+            )
+
+            if not bbox_intersects:
+                print("ERROR: Bbox does not intersect with DEM bounds!")
+                print(
+                    f"DEM covers: {src.bounds.left:.3f}° to {src.bounds.right:.3f}° (lon), {src.bounds.bottom:.3f}° to {src.bounds.top:.3f}° (lat)"
+                )
+                print(
+                    f"Bbox requests: {minx:.3f}° to {maxx:.3f}° (lon), {miny:.3f}° to {maxy:.3f}° (lat)"
+                )
+                sys.exit(1)
+
         dem, transform, crs = reproject_and_resample(
             src, dst_crs=args.crs, target_res=args.target_res, bbox=args.bbox
         )

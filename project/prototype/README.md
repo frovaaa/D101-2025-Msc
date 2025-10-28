@@ -39,6 +39,7 @@ python voxelize_dem.py switzerland.tif \
   --outdir voxel_out_switzerland \
   --h-voxel 30 --v-voxel 30 \
   --target-res 500 \
+  --crs EPSG:3857 \
   --bbox 5.955 10.492 45.817 47.808 \
   --sea-level -10
 ```
@@ -54,7 +55,7 @@ python voxelize_dem.py switzerland.tif \
 - `--target-res`: Target horizontal resolution in meters for the output voxel grid.
   - Uses bilinear interpolation to resample the input data.
 - `--bbox`: Bounding box to crop the input GeoTiff data.
-  - In target CRS if provided, else DEM CRS.
+  - In target CRS if provided
 - `--sea-level`: Elevation threshold to consider as sea level (in meters).
   - All elevation points below this threshold will be ignored.
 
