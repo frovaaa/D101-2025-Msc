@@ -15,15 +15,69 @@ import argparse
 import json
 import sys
 from pathlib import Path
+import requests
+from io import BytesIO
+import tempfile
 
 import numpy as np
 import rasterio
+from rasterio.io import MemoryFile
 from rasterio.enums import Resampling
 from rasterio.transform import from_origin
 from rasterio.warp import calculate_default_transform, reproject
 from rasterio.crs import CRS
 from matplotlib.colors import LightSource
 import matplotlib.pyplot as plt
+
+
+def fetch_dem_from_opentopo(bbox, api_key, demtype="COP30"):
+    """
+    Fetch DEM data from OpenTopography API.
+    
+    Args:
+        bbox: (minx, miny, maxx, maxy) in EPSG:4326 coordinates
+        api_key: OpenTopography API key
+        demtype: DEM type (COP30, SRTM, etc.)
+    
+    Returns:
+        rasterio dataset in memory
+    """
+    minx, miny, maxx, maxy = bbox
+    
+    # Validate bbox size (prevent huge requests)
+    if (maxx - minx) > 5.0 or (maxy - miny) > 5.0:
+        raise ValueError("Bounding box too large. Maximum 5 degrees per side.")
+    
+    # Build API URL
+    url = "https://portal.opentopography.org/API/globaldem"
+    params = {
+        "demtype": demtype,
+        "south": miny,
+        "north": maxy,
+        "west": minx,
+        "east": maxx,
+        "outputFormat": "GTiff",
+        "API_Key": api_key
+    }
+    
+    print(f"Fetching DEM data from OpenTopography...")
+    print(f"  Bbox: {minx:.3f}, {miny:.3f}, {maxx:.3f}, {maxy:.3f}")
+    print(f"  DEM Type: {demtype}")
+    
+    # Make API request
+    response = requests.get(url, params=params, timeout=120)
+    
+    if response.status_code != 200:
+        raise ValueError(f"OpenTopography API error: {response.status_code} - {response.text}")
+    
+    # Check if response is actually a GeoTIFF
+    if not response.content.startswith(b'II*\x00') and not response.content.startswith(b'MM\x00*'):
+        raise ValueError(f"API returned invalid GeoTIFF data: {response.text[:200]}")
+    
+    print(f"Downloaded {len(response.content):,} bytes")
+    
+    # Open GeoTIFF from memory
+    return MemoryFile(response.content).open()
 
 
 def determine_target_crs(src_crs, dst_crs=None, target_res=None):
@@ -211,7 +265,7 @@ def write_preview(dem, out_png, clim=None):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("dem", help="Input DEM GeoTIFF path")
+    p.add_argument("dem", nargs="?", help="Input DEM GeoTIFF path (optional if using --api-key)")
     p.add_argument("--outdir", default="voxel_out", help="Output directory")
     p.add_argument(
         "--h-voxel", type=float, default=25.0, help="Horizontal voxel size in meters"
@@ -232,7 +286,7 @@ def main():
         nargs=4,
         type=float,
         default=None,
-        help="Optional bbox to crop (minx miny maxx maxy) in target CRS if provided, else DEM CRS.",
+        help="Bbox coordinates (minx miny maxx maxy) in EPSG:4326. Required if using --api-key.",
     )
     p.add_argument(
         "--sea-level",
@@ -240,17 +294,44 @@ def main():
         default=0.0,
         help="Elevation considered as base (meters)",
     )
+    p.add_argument(
+        "--api-key",
+        help="OpenTopography API key for fetching DEM data"
+    )
+    p.add_argument(
+        "--demtype",
+        default="COP30",
+        help="DEM type for OpenTopography API (COP30, SRTM, etc.)"
+    )
     args = p.parse_args()
 
-    print(f"Starting DEM voxelization: {args.dem}")
+    # Validate arguments
+    if args.api_key:
+        if not args.bbox:
+            print("ERROR: --bbox is required when using --api-key")
+            sys.exit(1)
+        print("Starting DEM voxelization from OpenTopography API")
+    elif args.dem:
+        print(f"Starting DEM voxelization: {args.dem}")
+    else:
+        print("ERROR: Either provide a DEM file or use --api-key with --bbox")
+        sys.exit(1)
+
     print(f"Output directory: {args.outdir}")
     print(f"Voxel sizes: {args.h_voxel}m horizontal, {args.v_voxel}m vertical")
 
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
-    print("Opening DEM file...")
-    with rasterio.open(args.dem) as src:
+    # Open DEM source (either local file or API)
+    if args.api_key:
+        src = fetch_dem_from_opentopo(args.bbox, args.api_key, args.demtype)
+        src_context = src  # Already opened
+    else:
+        print("Opening DEM file...")
+        src_context = rasterio.open(args.dem)
+
+    with src_context as src:
         print(f"DEM bounds: {src.bounds}")
         print(f"  West: {src.bounds.left:.3f}°, East: {src.bounds.right:.3f}°")
         print(f"  South: {src.bounds.bottom:.3f}°, North: {src.bounds.top:.3f}°")

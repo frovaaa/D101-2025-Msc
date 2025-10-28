@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Interactive DEM Voxel Viewer</title>
+
+    <!-- Leaflet CSS -->
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"
+    />
+
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial,
+          sans-serif;
+        background: #0d1117;
+        color: #ffffff;
+        overflow: hidden;
+      }
+
+      .container {
+        display: flex;
+        height: 100vh;
+      }
+
+      .sidebar {
+        width: 320px;
+        background: #161b22;
+        border-right: 1px solid #30363d;
+        display: flex;
+        flex-direction: column;
+        overflow-y: auto;
+      }
+
+      .main-content {
+        flex: 1;
+        position: relative;
+        display: flex;
+        flex-direction: column;
+      }
+
+      h1 {
+        padding: 20px;
+        margin: 0;
+        font-size: 20px;
+        font-weight: 600;
+        border-bottom: 1px solid #30363d;
+      }
+
+      .section {
+        padding: 20px;
+        border-bottom: 1px solid #30363d;
+      }
+
+      .section h3 {
+        margin-bottom: 15px;
+        font-size: 16px;
+        color: #f0f6fc;
+      }
+
+      .form-group {
+        margin-bottom: 15px;
+      }
+
+      label {
+        display: block;
+        margin-bottom: 5px;
+        font-size: 14px;
+        color: #8b949e;
+      }
+
+      input[type='text'],
+      input[type='range'],
+      select {
+        width: 100%;
+        padding: 8px;
+        background: #0d1117;
+        border: 1px solid #30363d;
+        border-radius: 6px;
+        color: #f0f6fc;
+        font-size: 14px;
+      }
+
+      input[type='range'] {
+        padding: 4px 0;
+      }
+
+      .range-value {
+        float: right;
+        font-size: 12px;
+        color: #58a6ff;
+      }
+
+      button {
+        width: 100%;
+        padding: 10px;
+        background: #238636;
+        border: none;
+        border-radius: 6px;
+        color: white;
+        font-size: 14px;
+        cursor: pointer;
+        transition: background-color 0.2s;
+      }
+
+      button:hover {
+        background: #2ea043;
+      }
+
+      button:disabled {
+        background: #484f58;
+        cursor: not-allowed;
+      }
+
+      .danger-button {
+        background: #da3633;
+      }
+
+      .danger-button:hover {
+        background: #f85149;
+      }
+
+      #map {
+        height: 60vh;
+        min-height: 400px;
+        background: #0d1117;
+      }
+
+      #viewer {
+        flex: 1;
+        background: #0d1117;
+        position: relative;
+      }
+
+      .instructions {
+        padding: 15px;
+        background: #1c2128;
+        border-radius: 6px;
+        margin-bottom: 15px;
+        font-size: 13px;
+        line-height: 1.4;
+        color: #8b949e;
+      }
+
+      .status {
+        padding: 10px;
+        background: #0969da;
+        border-radius: 6px;
+        font-size: 13px;
+        margin-bottom: 15px;
+      }
+
+      .error {
+        background: #da3633;
+      }
+
+      .success {
+        background: #238636;
+      }
+
+      .bbox-display {
+        font-family: monospace;
+        font-size: 12px;
+        background: #0d1117;
+        padding: 8px;
+        border-radius: 4px;
+        border: 1px solid #30363d;
+        margin-top: 5px;
+      }
+
+      .loading {
+        display: none;
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(13, 17, 23, 0.9);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+      }
+
+      .spinner {
+        width: 40px;
+        height: 40px;
+        border: 3px solid #333;
+        border-top: 3px solid #58a6ff;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin-bottom: 20px;
+      }
+
+      @keyframes spin {
+        0% {
+          transform: rotate(0deg);
+        }
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="sidebar">
+        <h1>DEM Voxel Viewer</h1>
+
+        <div class="section">
+          <h3>1. Select Area</h3>
+          <div class="instructions">
+            Use the map to draw a rectangle around the area you want to
+            visualize. Click the rectangle tool in the map toolbar, then draw
+            your selection.
+          </div>
+          <div class="form-group">
+            <label>Selected Bounding Box:</label>
+            <div class="bbox-display" id="bboxDisplay">No area selected</div>
+          </div>
+        </div>
+
+        <div class="section">
+          <h3>2. API Configuration</h3>
+          <div class="form-group">
+            <label for="apiKey">OpenTopography API Key:</label>
+            <input type="text" id="apiKey" placeholder="Enter your API key" />
+          </div>
+          <div class="form-group">
+            <label for="demType">DEM Type:</label>
+            <select id="demType">
+              <option value="COP30">Copernicus 30m (COP30)</option>
+              <option value="SRTM">SRTM 90m</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="section">
+          <h3>3. Voxel Parameters</h3>
+          <div class="form-group">
+            <label for="hVoxel"
+              >Horizontal Voxel Size:
+              <span class="range-value" id="hVoxelValue">30m</span></label
+            >
+            <input type="range" id="hVoxel" min="10" max="100" value="30" />
+          </div>
+          <div class="form-group">
+            <label for="vVoxel"
+              >Vertical Voxel Size:
+              <span class="range-value" id="vVoxelValue">30m</span></label
+            >
+            <input type="range" id="vVoxel" min="5" max="50" value="30" />
+          </div>
+          <div class="form-group">
+            <label for="targetRes"
+              >Target Resolution:
+              <span class="range-value" id="targetResValue">Auto</span></label
+            >
+            <input type="range" id="targetRes" min="0" max="1000" value="0" />
+          </div>
+          <div class="form-group">
+            <label for="seaLevel"
+              >Sea Level:
+              <span class="range-value" id="seaLevelValue">0m</span></label
+            >
+            <input type="range" id="seaLevel" min="-100" max="500" value="0" />
+          </div>
+        </div>
+
+        <div class="section">
+          <button id="processBtn" disabled>Select Area First</button>
+          <div id="statusDiv"></div>
+        </div>
+      </div>
+
+      <div class="main-content">
+        <div id="map"></div>
+        <div id="viewer">
+          <canvas id="canvas"></canvas>
+          <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <div id="loadingText">Processing...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+
+    <!-- Three.js -->
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "./node_modules/three/build/three.module.js",
+          "three/examples/jsm/": "./node_modules/three/examples/jsm/"
+        }
+      }
+    </script>
+
+    <script type="module">
+      import * as THREE from 'three';
+      import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+
+      // Global state
+      let selectedBounds = null;
+      let scene, camera, renderer, controls;
+      let currentTerrain = null;
+
+      // Initialize map
+      const map = L.map('map', {
+        center: [46.5, 8.5], // Switzerland
+        zoom: 8,
+      });
+
+      // Add ArcGIS World Topo basemap
+      L.tileLayer(
+        'https://services.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
+        {
+          attribution: '© Esri',
+          maxZoom: 18,
+        }
+      ).addTo(map);
+
+      // Add drawing controls
+      const drawnItems = new L.FeatureGroup();
+      map.addLayer(drawnItems);
+
+      const drawControl = new L.Control.Draw({
+        position: 'topright',
+        draw: {
+          rectangle: {
+            shapeOptions: {
+              color: '#58a6ff',
+              fillColor: '#58a6ff',
+              fillOpacity: 0.2,
+            },
+          },
+          polygon: false,
+          circle: false,
+          marker: false,
+          polyline: false,
+          circlemarker: false,
+        },
+        edit: {
+          featureGroup: drawnItems,
+          remove: true,
+        },
+      });
+      map.addControl(drawControl);
+
+      // Handle drawing events
+      map.on('draw:created', function (e) {
+        drawnItems.clearLayers();
+        drawnItems.addLayer(e.layer);
+
+        const bounds = e.layer.getBounds();
+        selectedBounds = [
+          bounds.getWest(), // minx
+          bounds.getSouth(), // miny
+          bounds.getEast(), // maxx
+          bounds.getNorth(), // maxy
+        ];
+
+        updateBboxDisplay();
+        updateProcessButton();
+      });
+
+      map.on('draw:deleted', function (e) {
+        selectedBounds = null;
+        updateBboxDisplay();
+        updateProcessButton();
+      });
+
+      // UI update functions
+      function updateBboxDisplay() {
+        const bboxDiv = document.getElementById('bboxDisplay');
+        if (selectedBounds) {
+          const [minx, miny, maxx, maxy] = selectedBounds;
+          bboxDiv.textContent = `[${minx.toFixed(4)}, ${miny.toFixed(
+            4
+          )}, ${maxx.toFixed(4)}, ${maxy.toFixed(4)}]`;
+        } else {
+          bboxDiv.textContent = 'No area selected';
+        }
+      }
+
+      function updateProcessButton() {
+        const btn = document.getElementById('processBtn');
+        const apiKey = document.getElementById('apiKey').value;
+
+        if (selectedBounds && apiKey.trim()) {
+          btn.disabled = false;
+          btn.textContent = 'Generate 3D Terrain';
+        } else if (!selectedBounds) {
+          btn.disabled = true;
+          btn.textContent = 'Select Area First';
+        } else {
+          btn.disabled = true;
+          btn.textContent = 'Enter API Key';
+        }
+      }
+
+      function showStatus(message, type = 'info') {
+        const statusDiv = document.getElementById('statusDiv');
+        statusDiv.className = `status ${type}`;
+        statusDiv.textContent = message;
+        statusDiv.style.display = 'block';
+      }
+
+      function showLoading(message) {
+        document.getElementById('loading').style.display = 'flex';
+        document.getElementById('loadingText').textContent = message;
+      }
+
+      function hideLoading() {
+        document.getElementById('loading').style.display = 'none';
+      }
+
+      // Parameter change handlers
+      ['hVoxel', 'vVoxel', 'targetRes', 'seaLevel'].forEach((id) => {
+        const input = document.getElementById(id);
+        const valueSpan = document.getElementById(id + 'Value');
+
+        input.addEventListener('input', () => {
+          let value = input.value;
+          if (id === 'targetRes' && value === '0') {
+            valueSpan.textContent = 'Auto';
+          } else {
+            valueSpan.textContent = value + 'm';
+          }
+        });
+      });
+
+      document
+        .getElementById('apiKey')
+        .addEventListener('input', updateProcessButton);
+
+      // Initialize Three.js viewer
+      function initViewer() {
+        const canvas = document.getElementById('canvas');
+        const viewerDiv = document.getElementById('viewer');
+
+        renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+        renderer.setSize(viewerDiv.clientWidth, viewerDiv.clientHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x0d1117);
+
+        camera = new THREE.PerspectiveCamera(
+          60,
+          viewerDiv.clientWidth / viewerDiv.clientHeight,
+          1,
+          1e7
+        );
+        camera.position.set(1200, 1200, 1200);
+
+        controls = new OrbitControls(camera, renderer.domElement);
+        controls.target.set(0, 0, 0);
+        controls.update();
+
+        // Lighting
+        const hemi = new THREE.HemisphereLight(0xffffff, 0x333344, 0.9);
+        scene.add(hemi);
+        const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+        dir.position.set(1000, 2000, 1000);
+        scene.add(dir);
+
+        // Resize handler
+        window.addEventListener('resize', () => {
+          const width = viewerDiv.clientWidth;
+          const height = viewerDiv.clientHeight;
+          camera.aspect = width / height;
+          camera.updateProjectionMatrix();
+          renderer.setSize(width, height);
+        });
+
+        // Start render loop
+        function animate() {
+          requestAnimationFrame(animate);
+          renderer.render(scene, camera);
+        }
+        animate();
+      }
+
+      // Create terrain mesh from data (ported from working index.html)
+      function createTerrainMesh(heightsData, header) {
+        const {
+          shape,
+          horizontal_voxel_m: hVoxel,
+          vertical_voxel_m: vVoxel,
+          pixel_size_m,
+        } = header;
+        const [rows, cols] = shape;
+
+        // heightsData is already an Int16Array from a binary fetch
+        const heights = heightsData;
+
+        // Debug output
+        console.log('Header data:', header);
+        console.log(
+          `Grid: ${rows}x${cols}, hVoxel: ${hVoxel}m, vVoxel: ${vVoxel}m`
+        );
+        console.log(`Pixel size:`, pixel_size_m);
+
+        // Use the EXACT same approach as working index.html
+        // Both spacing and voxel size use hVoxel parameter (ignore pixel_size_m)
+        console.log(
+          `Using hVoxel: ${hVoxel}m for both spacing and size (ignoring pixel_size_m)`
+        );
+
+        // Create geometry and material - use hVoxel like the working version
+        const geom = new THREE.BoxGeometry(hVoxel, vVoxel, hVoxel);
+        const mat = new THREE.MeshStandardMaterial({
+          color: 0x6f8e5b,
+          metalness: 0.0,
+          roughness: 0.95,
+        });
+
+        // Count total voxels
+        let total = 0;
+        for (let i = 0; i < rows * cols; i++) total += heights[i];
+        const originalTotal = total;
+        total = Math.min(total, 100_000_000); // safety cap
+
+        console.log(
+          `Creating ${total.toLocaleString()} voxels for ${rows}x${cols} grid`
+        );
+        if (originalTotal > total) {
+          console.log(
+            `Capped at ${total.toLocaleString()} voxels (was ${originalTotal.toLocaleString()})`
+          );
+        }
+
+        // Create instanced mesh
+        const mesh = new THREE.InstancedMesh(geom, mat, total);
+        mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+
+        const dummy = new THREE.Object3D();
+        let idx = 0;
+
+        // Position voxels to form continuous terrain
+        for (let r = 0; r < rows; r++) {
+          for (let c = 0; c < cols; c++) {
+            const n = heights[r * cols + c];
+
+            // Use EXACT positioning from working index.html
+            const x = c * hVoxel + hVoxel / 2;
+            const z = r * hVoxel + hVoxel / 2;
+
+            for (let k = 0; k < n; k++) {
+              const y = k * vVoxel + vVoxel / 2;
+              // Set position of the cube
+              dummy.position.set(x, y, z);
+              // Calculate transformation matrix
+              dummy.updateMatrix();
+              // Store matrix for this instance
+              if (idx < total) mesh.setMatrixAt(idx++, dummy.matrix);
+            }
+          }
+        }
+
+        if (idx < total) mesh.count = idx;
+
+        // Position camera based on hVoxel spacing
+        const terrainWidth = cols * hVoxel;
+        const terrainDepth = rows * hVoxel;
+
+        camera.position.set(
+          terrainWidth * 0.8,
+          Math.max(terrainWidth, terrainDepth) * 1.2,
+          terrainDepth * 0.8
+        );
+        controls.target.set(terrainWidth / 2, 0, terrainDepth / 2);
+        controls.update();
+
+        console.log(
+          `Terrain mesh complete: ${idx.toLocaleString()} voxels rendered`
+        );
+        console.log(`Terrain size: ${terrainWidth}m x ${terrainDepth}m`);
+        return mesh;
+      }
+
+      // Process DEM data
+      async function processDEM() {
+        if (!selectedBounds) return;
+
+        try {
+          showLoading('Processing DEM data...');
+
+          // Get parameters
+          const params = {
+            bbox: selectedBounds,
+            api_key: document.getElementById('apiKey').value,
+            demtype: document.getElementById('demType').value,
+            h_voxel: parseFloat(document.getElementById('hVoxel').value),
+            v_voxel: parseFloat(document.getElementById('vVoxel').value),
+            target_res:
+              parseInt(document.getElementById('targetRes').value) || null,
+            sea_level: parseFloat(document.getElementById('seaLevel').value),
+          };
+
+          // Make API request
+          const response = await fetch('/process', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(params),
+          });
+
+          if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Processing failed');
+          }
+
+          const result = await response.json();
+
+          // Remove old terrain
+          if (currentTerrain) {
+            scene.remove(currentTerrain);
+            currentTerrain.geometry.dispose();
+            currentTerrain.material.dispose();
+          }
+
+          // Fetch binary heights data as ArrayBuffer
+          const heightsResp = await fetch(result.heights_url);
+          if (!heightsResp.ok) throw new Error('Failed to fetch heights.bin');
+          const heightsBuffer = await heightsResp.arrayBuffer();
+          const heights = new Int16Array(heightsBuffer);
+
+          // Create new terrain
+          showLoading('Creating 3D visualization...');
+          currentTerrain = createTerrainMesh(heights, result.header);
+          scene.add(currentTerrain);
+
+          hideLoading();
+          showStatus('Terrain generated successfully!', 'success');
+          if (result.preview_url) {
+            const statusDiv = document.getElementById('statusDiv');
+            const a = document.createElement('a');
+            a.href = result.preview_url;
+            a.textContent = 'Open preview';
+            a.style.marginLeft = '8px';
+            a.style.color = '#58a6ff';
+            a.target = '_blank';
+            statusDiv.appendChild(a);
+          }
+        } catch (error) {
+          hideLoading();
+          showStatus(`Error: ${error.message}`, 'error');
+          console.error('Processing error:', error);
+        }
+      }
+
+      // Event listeners
+      document
+        .getElementById('processBtn')
+        .addEventListener('click', processDEM);
+
+      // Initialize
+      initViewer();
+    </script>
+  </body>
+</html>

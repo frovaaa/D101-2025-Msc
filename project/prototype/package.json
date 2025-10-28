@@ -1,4 +1,14 @@
 {
+  "name": "cubert",
+  "version": "1.0.0",
+  "description": "This project is a Voxel based 3D reconstruction visualization tool.",
+  "license": "ISC",
+  "author": "",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
   "dependencies": {
     "three": "^0.180.0",
     "three-orbitcontrols": "^2.110.2"

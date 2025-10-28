@@ -2,3 +2,4 @@ node_modules/
 voxel_out*/
 *.tif
 .venv/
+results/
