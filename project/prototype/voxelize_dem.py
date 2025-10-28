@@ -42,6 +42,12 @@ def reproject_and_resample(src, dst_crs=None, target_res=None, bbox=None):
         )
         dst_crs_final = CRS.from_epsg(3857)
 
+    elif dst_crs is None and src_crs.is_geographic or dst_crs_final.is_geographic:
+        print(
+            f"Source CRS is geographic ({src_crs}). Reprojecting to EPSG:3857 for metric voxel processing."
+        )
+        dst_crs_final = CRS.from_epsg(3857)
+
     # Reproject to dst_crs if needed
     if src_crs != dst_crs_final:
         print(f"Reprojecting from {src_crs} to {dst_crs_final}...")
