@@ -35,13 +35,14 @@ The final output is a binary file containing the number of voxels in height for 
 ### Usage
 
 ```bash
-python voxelize_dem.py switzerland.tif \
-  --outdir voxel_out_switzerland \
+python voxelize_dem.py nuovaZelanda.tif \
+  --outdir voxel_out_Lugano10x10x10 \
   --h-voxel 30 --v-voxel 30 \
-  --target-res 500 \
+  --crs EPSG:4326 \
+  --target-res 1000 \
   --crs EPSG:3857 \
-  --bbox 5.955 10.492 45.817 47.808 \
-  --sea-level -10
+  --bbox 170.5 -46.9 172.5 -42.8 \
+  --sea-level 100
 ```
 
 ### Parameters
@@ -54,10 +55,50 @@ python voxelize_dem.py switzerland.tif \
   - Defines the height of each voxel. This will impact the final number of voxels generated as all the elevation datapoints lower than the voxel height will be ignored.
 - `--target-res`: Target horizontal resolution in meters for the output voxel grid.
   - Uses bilinear interpolation to resample the input data.
+- `--crs`: Coordinate Reference System for the output voxel grid.
+  - Must be a metric CRS (e.g., EPSG:3857, EPSG:2193).
+  - If not provided, or not metric, the script defaults to EPSG:3857 (Web Mercator).
 - `--bbox`: Bounding box to crop the input GeoTiff data.
-  - In target CRS if provided
+  - In source CRS, meaning degrees for EPSG:4326.
+  - If using DEM dataset use degrees as it is in EPSG:4326.
+  - Format: `west south east north`
+  - The reference point (0,0) is the global one used by the CRS.
+    - Example: for EPSG:4326, (0,0) is at the intersection of the Equator and the Prime Meridian.
 - `--sea-level`: Elevation threshold to consider as sea level (in meters).
   - All elevation points below this threshold will be ignored.
+
+## 3D Visualization
+
+The output binary file can be visualized using a 3D rendering tool that supports voxel data.
+
+Our implementation available at [index.html](index.html) uses Three.js to render the voxel data in a web browser.
+
+The tool loads the header file `header.json` produced by the preprocessing script to understand the voxel grid dimensions and scaling.
+Then it loads the binary voxel data and renders it as a 3D voxel grid.
+
+A cap to the total number of voxels is implemented to prevent out of memory issues in the browser.
+
+A high number of voxels (e.g. more than 10 million) may lead to performance issues or crashes.
+
+A value around or below 5 million voxels is recommended for smooth performance.
+
+To reduce the number of voxels, consider increasing the `--v-voxel` and `--target-res` sizes during preprocessing.
+
+### Running the visualization tool
+
+To run the visualization tool, simply run a local web server in the project directory and open `index.html` in a web browser.
+
+Example using Python's built-in HTTP server:
+
+```bash
+python -m http.server 8000
+```
+
+### Camera Controls
+We use the `OrbitControls` from Three.js to allow interactive camera movement.
+- Left mouse button: Rotate around the target.
+- Middle mouse button: Zoom in/out.
+- Right mouse button: Pan the camera.
 
 ## Citations
 
