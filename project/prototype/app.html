@@ -304,15 +304,16 @@
     <script type="importmap">
       {
         "imports": {
-          "three": "./node_modules/three/build/three.module.js",
-          "three/examples/jsm/": "./node_modules/three/examples/jsm/"
+          "three": "https://unpkg.com/three@0.180.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.180.0/examples/jsm/"
         }
       }
     </script>
 
     <script type="module">
       import * as THREE from 'three';
-      import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+      import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
 
       // Global state
       let selectedBounds = null;

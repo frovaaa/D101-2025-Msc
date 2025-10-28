@@ -42,7 +42,7 @@ app.add_middleware(
 # Serve static files (HTML, JS, etc.)
 app.mount("/static", StaticFiles(directory="."), name="static")
 
-app.mount("/node_modules", StaticFiles(directory="node_modules"), name="node_modules")
+# app.mount("/node_modules", StaticFiles(directory="node_modules"), name="node_modules")
 
 # Persistent results directory for serving generated files
 RESULTS_DIR = Path("results")
