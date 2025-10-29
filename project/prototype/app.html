@@ -699,26 +699,16 @@
 
           const result = await response.json();
 
-          // Remove old terrain
-          if (currentTerrain) {
-            scene.remove(currentTerrain);
-            currentTerrain.geometry.dispose();
-            currentTerrain.material.dispose();
-          }
+          // Load the terrain (new or cached)
+          await loadTerrain(result);
 
-          // Fetch binary heights data as ArrayBuffer
-          const heightsResp = await fetch(result.heights_url);
-          if (!heightsResp.ok) throw new Error('Failed to fetch heights.bin');
-          const heightsBuffer = await heightsResp.arrayBuffer();
-          const heights = new Int16Array(heightsBuffer);
+          const statusMsg = result.cached
+            ? 'Terrain loaded from cache!'
+            : 'Terrain generated successfully!';
+          showStatus(statusMsg, 'success');
 
-          // Create new terrain
-          showLoading('Creating 3D visualization...');
-          currentTerrain = createTerrainMesh(heights, result.header);
-          scene.add(currentTerrain);
-
-          hideLoading();
-          showStatus('Terrain generated successfully!', 'success');
+          // Update sharing info with job ID
+          updateSharingInfo(result.job_id);
           if (result.preview_url) {
             const statusDiv = document.getElementById('statusDiv');
             const a = document.createElement('a');
@@ -821,6 +811,102 @@
         }
       });
 
+      // URL parameter support for sharing
+      async function checkForSharedResult() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const jobId = urlParams.get('job');
+
+        if (jobId) {
+          try {
+            showLoading('Loading shared terrain...');
+
+            const response = await fetch(`/api/results/${jobId}`);
+            if (!response.ok) {
+              throw new Error('Shared terrain not found');
+            }
+
+            const result = await response.json();
+
+            // Load the cached result
+            await loadTerrain(result);
+            showStatus(`Loaded shared terrain (cached)`, 'success');
+
+            // Update URL sharing info
+            updateSharingInfo(jobId);
+          } catch (error) {
+            hideLoading();
+            showStatus(
+              `Failed to load shared terrain: ${error.message}`,
+              'error'
+            );
+          }
+        }
+      }
+
+      // Load terrain from result data
+      async function loadTerrain(result) {
+        // Remove old terrain
+        if (currentTerrain) {
+          scene.remove(currentTerrain);
+          currentTerrain.geometry.dispose();
+          currentTerrain.material.dispose();
+        }
+
+        // Fetch binary heights data as ArrayBuffer
+        const heightsResp = await fetch(result.heights_url);
+        if (!heightsResp.ok) throw new Error('Failed to fetch heights.bin');
+        const heightsBuffer = await heightsResp.arrayBuffer();
+        const heights = new Int16Array(heightsBuffer);
+
+        // Create new terrain
+        showLoading('Creating 3D visualization...');
+        currentTerrain = createTerrainMesh(heights, result.header);
+        scene.add(currentTerrain);
+
+        hideLoading();
+      }
+
+      // Update sharing information in UI
+      function updateSharingInfo(jobId) {
+        const shareUrl = `${window.location.origin}${window.location.pathname}?job=${jobId}`;
+
+        // Add sharing section to sidebar if not exists
+        let shareSection = document.getElementById('shareSection');
+        if (!shareSection) {
+          shareSection = document.createElement('div');
+          shareSection.id = 'shareSection';
+          shareSection.className = 'section';
+          shareSection.innerHTML = `
+            <h3>Share Terrain</h3>
+            <div class="input-group">
+              <label>Shareable URL:</label>
+              <input type="text" id="shareUrl" readonly style="margin-top: 4px; font-family: monospace; font-size: 12px;">
+              <button id="copyUrlBtn" style="margin-top: 4px; padding: 4px 8px;">Copy URL</button>
+            </div>
+          `;
+
+          // Insert after controls section
+          const controlsSection = document.querySelector('.section:last-child');
+          controlsSection.parentNode.insertBefore(
+            shareSection,
+            controlsSection.nextSibling
+          );
+        }
+
+        // Update URL and add copy functionality
+        const shareUrlInput = document.getElementById('shareUrl');
+        shareUrlInput.value = shareUrl;
+
+        document.getElementById('copyUrlBtn').onclick = () => {
+          shareUrlInput.select();
+          navigator.clipboard.writeText(shareUrl);
+          showStatus('URL copied to clipboard!', 'success');
+        };
+
+        // Update browser URL without reload
+        window.history.replaceState({}, '', shareUrl);
+      }
+
       // Event listeners
       document
         .getElementById('processBtn')
@@ -832,6 +918,7 @@
 
       // Initialize
       initViewer();
+      checkForSharedResult();
     </script>
   </body>
 </html>

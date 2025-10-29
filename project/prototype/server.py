@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Optional
 import uuid
 import shutil
+import hashlib
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -47,13 +48,56 @@ app.mount("/static", StaticFiles(directory="."), name="static")
 # Persistent results directory for serving generated files
 RESULTS_DIR = Path("results")
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-app.mount("/results", StaticFiles(directory=str(RESULTS_DIR)), name="results")
+
+
+def generate_job_id(params: ProcessingParams) -> str:
+    """Generate deterministic job ID from processing parameters for caching."""
+    # Create a string representation of all parameters that affect the output
+    param_string = (
+        f"{params.bbox}_{params.h_voxel}_{params.v_voxel}_"
+        f"{params.target_res}_{params.sea_level}_{params.demtype}"
+    )
+    # Generate SHA256 hash for consistent, collision-resistant ID
+    return hashlib.sha256(param_string.encode()).hexdigest()[:16]
 
 
 @app.get("/")
 async def read_root():
     """Serve the main HTML page."""
     return FileResponse("app.html")
+
+
+@app.get("/api/results/{job_id}")
+async def get_result(job_id: str):
+    """Serve existing results by job ID for URL sharing."""
+    job_dir = RESULTS_DIR / job_id
+
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail="Result not found")
+
+    header_file = job_dir / "header.json"
+    if not header_file.exists():
+        raise HTTPException(status_code=404, detail="Result header not found")
+
+    # Load header
+    with open(header_file) as f:
+        header = json.load(f)
+
+    # Build URLs for client to fetch binary safely
+    heights_url = f"/results/{job_id}/heights.bin"
+    header_url = f"/results/{job_id}/header.json"
+    preview_url = (
+        f"/results/{job_id}/preview.png" if (job_dir / "preview.png").exists() else None
+    )
+
+    return {
+        "header": header,
+        "heights_url": heights_url,
+        "header_url": header_url,
+        "preview_url": preview_url,
+        "job_id": job_id,
+        "cached": True,
+    }
 
 
 @app.post("/process")
@@ -67,6 +111,40 @@ async def process_dem(params: ProcessingParams):
         minx, miny, maxx, maxy = params.bbox
         if maxx <= minx or maxy <= miny:
             raise HTTPException(status_code=400, detail="Invalid bbox coordinates")
+
+        # Generate deterministic job ID for caching
+        job_id = generate_job_id(params)
+        job_dir = RESULTS_DIR / job_id
+
+        # Check if results already exist (cache hit)
+        if (
+            job_dir.exists()
+            and (job_dir / "header.json").exists()
+            and (job_dir / "heights.bin").exists()
+        ):
+            print(f"Cache hit! Returning existing results for job {job_id}")
+
+            # Load existing header
+            with open(job_dir / "header.json") as f:
+                header = json.load(f)
+
+            # Build URLs for existing files
+            heights_url = f"/results/{job_id}/heights.bin"
+            header_url = f"/results/{job_id}/header.json"
+            preview_url = (
+                f"/results/{job_id}/preview.png"
+                if (job_dir / "preview.png").exists()
+                else None
+            )
+
+            return {
+                "header": header,
+                "heights_url": heights_url,
+                "header_url": header_url,
+                "preview_url": preview_url,
+                "job_id": job_id,
+                "cached": True,
+            }
 
         # Create temporary output directory
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -121,9 +199,8 @@ async def process_dem(params: ProcessingParams):
             with open(header_file) as f:
                 header = json.load(f)
 
-            # Persist results to a job-specific folder we can serve statically
-            job_id = uuid.uuid4().hex
-            job_dir = RESULTS_DIR / job_id
+            # Persist results to the job-specific folder (job_id already generated above)
+            # job_dir already created above in cache check
 
             print(f"DEBUG: Copying {output_dir} to {job_dir}")
             print(f"DEBUG: RESULTS_DIR = {RESULTS_DIR}")
@@ -153,6 +230,7 @@ async def process_dem(params: ProcessingParams):
                 "preview_url": preview_url,
                 "processing_log": result.stdout,
                 "job_id": job_id,
+                "cached": False,
             }
 
     except Exception as e:
@@ -181,6 +259,10 @@ async def process_dem(params: ProcessingParams):
 async def health_check():
     """Health check endpoint."""
     return {"status": "ok"}
+
+
+# Mount static files after API routes to avoid conflicts
+app.mount("/results", StaticFiles(directory=str(RESULTS_DIR)), name="results")
 
 
 def cleanup_debug_files():
