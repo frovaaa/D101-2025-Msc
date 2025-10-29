@@ -81,6 +81,7 @@
       }
 
       input[type='text'],
+      input[type='password'],
       input[type='range'],
       select {
         width: 100%;
@@ -141,6 +142,56 @@
         flex: 1;
         background: #0d1117;
         position: relative;
+      }
+
+      /* Fullscreen styles */
+      .fullscreen-controls {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        z-index: 1000;
+      }
+
+      .fullscreen-btn {
+        background: rgba(13, 17, 23, 0.8);
+        border: 1px solid #30363d;
+        color: #f0f6fc;
+        padding: 8px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 16px;
+        transition: background-color 0.2s;
+        width: 36px;
+        height: 36px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .fullscreen-btn:hover {
+        background: rgba(48, 54, 61, 0.8);
+      }
+
+      /* Fullscreen mode: viewer takes over map area while keeping sidebar */
+      .viewer-fullscreen {
+        position: absolute !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100% !important;
+        height: 100% !important;
+        z-index: 100 !important;
+        background: #0d1117 !important;
+      }
+
+      /* Hide map when viewer is in fullscreen */
+      .main-content.viewer-fullscreen-active #map {
+        display: none !important;
+      }
+
+      /* Make main-content full height when in fullscreen */
+      .main-content.viewer-fullscreen-active {
+        height: 100vh !important;
+        position: relative !important;
       }
 
       .instructions {
@@ -235,7 +286,11 @@
           <h3>2. API Configuration</h3>
           <div class="form-group">
             <label for="apiKey">OpenTopography API Key:</label>
-            <input type="text" id="apiKey" placeholder="Enter your API key" />
+            <input
+              type="password"
+              id="apiKey"
+              placeholder="Enter your API key"
+            />
           </div>
           <div class="form-group">
             <label for="demType">DEM Type:</label>
@@ -287,6 +342,15 @@
       <div class="main-content">
         <div id="map"></div>
         <div id="viewer">
+          <div class="fullscreen-controls">
+            <button
+              class="fullscreen-btn"
+              id="fullscreenBtn"
+              title="Toggle Fullscreen"
+            >
+              ⛶
+            </button>
+          </div>
           <canvas id="canvas"></canvas>
           <div class="loading" id="loading">
             <div class="spinner"></div>
@@ -470,6 +534,11 @@
 
         controls = new OrbitControls(camera, renderer.domElement);
         controls.target.set(0, 0, 0);
+
+        // Remove zoom limits for unlimited zoom
+        controls.enableDamping = true; // Smooth controls
+        controls.dampingFactor = 0.05;
+
         controls.update();
 
         // Lighting
@@ -702,10 +771,64 @@
         }
       }
 
+      // Fullscreen functionality
+      let isFullscreen = false;
+
+      function toggleFullscreen() {
+        const viewerDiv = document.getElementById('viewer');
+        const mainContent = document.querySelector('.main-content');
+        const fullscreenBtn = document.getElementById('fullscreenBtn');
+
+        if (!isFullscreen) {
+          // Enter fullscreen - viewer takes over main-content area
+          viewerDiv.classList.add('viewer-fullscreen');
+          mainContent.classList.add('viewer-fullscreen-active');
+          fullscreenBtn.innerHTML = '⛉'; // Exit fullscreen icon
+          fullscreenBtn.title = 'Exit Fullscreen';
+          isFullscreen = true;
+
+          // Update renderer size for fullscreen (main-content area minus sidebar)
+          setTimeout(() => {
+            const width = mainContent.clientWidth;
+            const height = window.innerHeight;
+            camera.aspect = width / height;
+            camera.updateProjectionMatrix();
+            renderer.setSize(width, height);
+          }, 50);
+        } else {
+          // Exit fullscreen - restore normal layout
+          viewerDiv.classList.remove('viewer-fullscreen');
+          mainContent.classList.remove('viewer-fullscreen-active');
+          fullscreenBtn.innerHTML = '⛶'; // Enter fullscreen icon
+          fullscreenBtn.title = 'Toggle Fullscreen';
+          isFullscreen = false;
+
+          // Restore renderer size to normal viewer area
+          setTimeout(() => {
+            const width = viewerDiv.clientWidth;
+            const height = viewerDiv.clientHeight;
+            camera.aspect = width / height;
+            camera.updateProjectionMatrix();
+            renderer.setSize(width, height);
+          }, 100);
+        }
+      }
+
+      // Handle ESC key to exit fullscreen
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && isFullscreen) {
+          toggleFullscreen();
+        }
+      });
+
       // Event listeners
       document
         .getElementById('processBtn')
         .addEventListener('click', processDEM);
+
+      document
+        .getElementById('fullscreenBtn')
+        .addEventListener('click', toggleFullscreen);
 
       // Initialize
       initViewer();
