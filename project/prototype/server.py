@@ -136,7 +136,19 @@ async def process_dem(params: ProcessingParams):
             }
             
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        error_msg = str(e)
+        
+        # Add helpful info about debug files when there are corruption errors
+        if "DEM file corruption detected" in error_msg or "LZWDecode" in error_msg or "corrupted" in error_msg:
+            debug_dir = Path("debug_downloads")
+            if debug_dir.exists():
+                debug_files = list(debug_dir.glob("*.tif"))
+                if debug_files:
+                    latest_file = max(debug_files, key=lambda p: p.stat().st_mtime)
+                    error_msg += f"\n\nDEBUG: The corrupted DEM file was saved to: {latest_file}"
+                    error_msg += f"\nYou can inspect this file with QGIS or other GIS software to verify the corruption."
+        
+        raise HTTPException(status_code=500, detail=error_msg)
 
 
 @app.get("/health")
@@ -145,7 +157,28 @@ async def health_check():
     return {"status": "ok"}
 
 
+def cleanup_debug_files():
+    """Remove debug DEM files older than 24 hours to prevent disk buildup."""
+    debug_dir = Path("debug_downloads")
+    if not debug_dir.exists():
+        return
+    
+    import time
+    cutoff_time = time.time() - (24 * 3600)  # 24 hours ago
+    
+    for file_path in debug_dir.glob("*.tif"):
+        if file_path.stat().st_mtime < cutoff_time:
+            try:
+                file_path.unlink()
+                print(f"Cleaned up old debug file: {file_path.name}")
+            except Exception:
+                pass  # Ignore cleanup errors
+
+
 if __name__ == "__main__":
     print("Starting DEM Voxelizer API server...")
     print("Open http://localhost:8000 to use the application")
+    
+    # Clean up old debug files on startup
+    cleanup_debug_files()
     uvicorn.run(app, host="0.0.0.0", port=8000)

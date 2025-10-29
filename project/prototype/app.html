@@ -314,7 +314,6 @@
       import * as THREE from 'three';
       import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-
       // Global state
       let selectedBounds = null;
       let scene, camera, renderer, controls;
@@ -553,14 +552,20 @@
         const dummy = new THREE.Object3D();
         let idx = 0;
 
-        // Position voxels to form continuous terrain
+        // Calculate terrain dimensions for proper centering
+        const terrainWidth = cols * hVoxel;
+        const terrainDepth = rows * hVoxel;
+        const centerX = terrainWidth / 2;
+        const centerZ = terrainDepth / 2;
+
+        // Position voxels to form continuous terrain (centered around origin)
         for (let r = 0; r < rows; r++) {
           for (let c = 0; c < cols; c++) {
             const n = heights[r * cols + c];
 
-            // Use EXACT positioning from working index.html
-            const x = c * hVoxel + hVoxel / 2;
-            const z = r * hVoxel + hVoxel / 2;
+            // Center the terrain around origin for better camera positioning
+            const x = c * hVoxel + hVoxel / 2 - centerX;
+            const z = r * hVoxel + hVoxel / 2 - centerZ;
 
             for (let k = 0; k < n; k++) {
               const y = k * vVoxel + vVoxel / 2;
@@ -576,22 +581,19 @@
 
         if (idx < total) mesh.count = idx;
 
-        // Position camera based on hVoxel spacing
-        const terrainWidth = cols * hVoxel;
-        const terrainDepth = rows * hVoxel;
+        // Better camera positioning for centered terrain
+        const maxDim = Math.max(terrainWidth, terrainDepth);
+        const distance = maxDim * 1.2;
+        const height = maxDim * 0.8;
 
-        camera.position.set(
-          terrainWidth * 0.8,
-          Math.max(terrainWidth, terrainDepth) * 1.2,
-          terrainDepth * 0.8
-        );
-        controls.target.set(terrainWidth / 2, 0, terrainDepth / 2);
+        camera.position.set(distance * 0.7, height, distance * 0.7);
+        camera.lookAt(0, height * 0.3, 0);
+        controls.target.set(0, height * 0.3, 0);
         controls.update();
 
         console.log(
           `Terrain mesh complete: ${idx.toLocaleString()} voxels rendered`
         );
-        console.log(`Terrain size: ${terrainWidth}m x ${terrainDepth}m`);
         return mesh;
       }
 
@@ -660,7 +662,42 @@
           }
         } catch (error) {
           hideLoading();
-          showStatus(`Error: ${error.message}`, 'error');
+
+          // Parse and display more specific error messages
+          let errorMessage = error.message;
+
+          if (errorMessage.includes('DEM file corruption detected')) {
+            showStatus(
+              'DEM File Corrupted: The downloaded elevation data is corrupted. Try a different area or DEM type.',
+              'error'
+            );
+          } else if (errorMessage.includes('DEM file read error')) {
+            showStatus(
+              'DEM Read Error: Cannot read elevation data. Try selecting a different area.',
+              'error'
+            );
+          } else if (errorMessage.includes('DEM file access error')) {
+            showStatus(
+              'DEM Access Error: Cannot access downloaded data. Try a different DEM type or area.',
+              'error'
+            );
+          } else if (
+            errorMessage.includes('LZWDecode') ||
+            errorMessage.includes('corrupted')
+          ) {
+            showStatus(
+              'Data Corruption: Elevation data is corrupted. Please try a different geographic area or DEM type (switch between COP30 and SRTM).',
+              'error'
+            );
+          } else if (errorMessage.includes('TIFFReadEncodedTile')) {
+            showStatus(
+              'File Format Error: Cannot read elevation file format. Try selecting a smaller area or different DEM type.',
+              'error'
+            );
+          } else {
+            showStatus(`Error: ${errorMessage}`, 'error');
+          }
+
           console.error('Processing error:', error);
         }
       }
