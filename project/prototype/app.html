@@ -811,6 +811,49 @@
         }
       });
 
+      // Show bbox on map from coordinates
+      function showBboxOnMap(bbox) {
+        console.log('showBboxOnMap called with:', bbox);
+        if (!bbox || bbox.length !== 4) {
+          console.log('Invalid bbox, returning');
+          return;
+        }
+        
+        // Clear existing selection
+        drawnItems.clearLayers();
+        
+        // Create rectangle from bbox
+        const [minx, miny, maxx, maxy] = bbox;
+        console.log('Creating rectangle with bounds:', {minx, miny, maxx, maxy});
+        
+        const bounds = L.latLngBounds(
+          L.latLng(miny, minx), // southwest
+          L.latLng(maxy, maxx)  // northeast  
+        );
+        
+        const rectangle = L.rectangle(bounds, {
+          color: '#58a6ff',
+          fillColor: '#58a6ff', 
+          fillOpacity: 0.2,
+        });
+        
+        // Add to map
+        drawnItems.addLayer(rectangle);
+        
+        // Fit map to bounds
+        map.fitBounds(bounds, { padding: [20, 20] });
+        
+        // Update global state
+        selectedBounds = bbox;
+        updateBboxDisplay();
+        
+        console.log('Rectangle added to map and view fitted');
+        updateProcessButton();
+        
+        // Fit map to show the selection
+        map.fitBounds(bounds, { padding: [20, 20] });
+      }
+
       // URL parameter support for sharing
       async function checkForSharedResult() {
         const urlParams = new URLSearchParams(window.location.search);
@@ -826,12 +869,19 @@
             }
 
             const result = await response.json();
-
+            console.log('Shared terrain result:', result);
+            
             // Load the cached result
             await loadTerrain(result);
             showStatus(`Loaded shared terrain (cached)`, 'success');
-
-            // Update URL sharing info
+            
+            // Show the area that was processed on the map
+            if (result.bbox) {
+              console.log('Found bbox in result, showing on map:', result.bbox);
+              showBboxOnMap(result.bbox);
+            } else {
+              console.log('No bbox found in result');
+            }            // Update URL sharing info
             updateSharingInfo(jobId);
           } catch (error) {
             hideLoading();

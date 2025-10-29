@@ -83,6 +83,14 @@ async def get_result(job_id: str):
     with open(header_file) as f:
         header = json.load(f)
 
+    # Load bbox if available
+    bbox_file = job_dir / "bbox.json"
+    bbox = None
+    if bbox_file.exists():
+        with open(bbox_file) as f:
+            bbox_data = json.load(f)
+            bbox = bbox_data.get("bbox")
+
     # Build URLs for client to fetch binary safely
     heights_url = f"/results/{job_id}/heights.bin"
     header_url = f"/results/{job_id}/header.json"
@@ -96,6 +104,7 @@ async def get_result(job_id: str):
         "header_url": header_url,
         "preview_url": preview_url,
         "job_id": job_id,
+        "bbox": bbox,  # Add bbox for map display
         "cached": True,
     }
 
@@ -209,6 +218,11 @@ async def process_dem(params: ProcessingParams):
             shutil.copytree(output_dir, job_dir)
 
             print(f"DEBUG: Job dir contents: {list(job_dir.glob('*'))}")
+
+            # Save original bbox for map display
+            bbox_file = job_dir / "bbox.json"
+            with open(bbox_file, 'w') as f:
+                json.dump({"bbox": params.bbox}, f)
 
             # Build URLs for client to fetch binary safely
             heights_url = f"/results/{job_id}/heights.bin"

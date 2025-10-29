@@ -464,6 +464,9 @@ def main():
             "min_height_vox": int(col_heights.min()),
             "max_height_vox": int(col_heights.max()),
             "transform": transform_vals,
+            "bbox_epsg4326": (
+                args.bbox if args.bbox else None
+            ),  # Original lat/lon bbox for map reconstruction
         }
         print("Writing metadata header...")
         with open(outdir / "header.json", "w") as f:
